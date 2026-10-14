@@ -628,6 +628,7 @@ const INDEX_HTML = `<!DOCTYPE html>
     border-radius: 8px;
     padding: 16px;
   }
+  #detail { scroll-margin-top: 72px; }
   .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
@@ -724,6 +725,31 @@ const INDEX_HTML = `<!DOCTYPE html>
     selectedId: null,
   };
 
+  function parseIdFromUrl() {
+    try {
+      const url = new URL(window.location.href);
+      const id = url.searchParams.get('id') || url.hash.replace(/^#/, '');
+      if (id && /^ISSUE-\\d{3,}$/i.test(id)) {
+        return id.toUpperCase();
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function updateUrl(id) {
+    try {
+      const url = new URL(window.location.href);
+      if (id) {
+        url.searchParams.set('id', id);
+        url.hash = '';
+      } else {
+        url.searchParams.delete('id');
+      }
+      const newUrl = url.pathname + url.search + (url.hash || '');
+      history.replaceState({}, '', newUrl);
+    } catch (e) {}
+  }
+
   const els = {
     list: document.getElementById('list'),
     detail: document.getElementById('detail'),
@@ -806,6 +832,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 
   function selectIssue(id) {
     state.selectedId = id;
+    updateUrl(id);
     renderList();
     renderDetail();
   }
@@ -841,6 +868,12 @@ const INDEX_HTML = `<!DOCTYPE html>
     const titleInput = el('input', { attrs: { type: 'text', value: issue.title } });
     const descInput = el('textarea', { attrs: {} });
     descInput.value = issue.description || '';
+    function adjustDescHeight() {
+      descInput.style.height = 'auto';
+      descInput.style.height = Math.max(descInput.scrollHeight, 80) + 'px';
+    }
+    descInput.addEventListener('input', adjustDescHeight);
+    setTimeout(adjustDescHeight, 0);
 
     const statusSel = el('select', {}, state.meta.statuses.map((s) =>
       el('option', { text: s.label, attrs: { value: s.id, ...(s.id === issue.status ? { selected: 'selected' } : {}) } })
@@ -897,20 +930,63 @@ const INDEX_HTML = `<!DOCTYPE html>
             commentInput.value = '';
             toast('コメントを追加しました。');
             await reload();
+            renderDetail();
           });
         },
       },
     });
 
-    const commentNodes = (issue.comments || []).map((c) =>
-      el('div', { className: 'comment' }, [
+    const commentNodes = (issue.comments || []).map((c, idx) => {
+      const body = el('div', { className: 'body', text: c.text });
+      const editBtn = el('button', {
+        className: 'ghost',
+        text: '編集',
+        on: {
+          click: () => {
+            if (body.querySelector('textarea')) return;
+            const ta = el('textarea', { attrs: { value: c.text } });
+            body.textContent = '';
+            body.appendChild(ta);
+            const save = el('button', {
+              className: 'primary',
+              text: '保存',
+              on: {
+                click: async () => {
+                  const newText = ta.value.trim();
+                  if (!newText) return;
+                  const newComments = (issue.comments || []).map((cc, i) => (i === idx ? { ...cc, text: newText, updatedAt: new Date().toISOString() } : cc));
+                  await withError(async () => {
+                    await api.update(issue.id, { comments: newComments });
+                    toast('コメントを更新しました。');
+                    await reload();
+                    renderDetail();
+                  });
+                },
+              },
+            });
+            const cancel = el('button', {
+              text: 'キャンセル',
+              on: {
+                click: () => {
+                  body.textContent = c.text;
+                },
+              },
+            });
+            body.appendChild(el('div', { className: 'toolbar', attrs: { style: 'margin-top:8px' } }, [save, cancel]));
+            ta.focus();
+          },
+        },
+      });
+      return el('div', { className: 'comment' }, [
         el('div', { className: 'head' }, [
           el('span', { className: 'author', text: c.author || '不明' }),
           el('span', { text: fmtDate(c.createdAt) }),
+          el('span', { className: 'spacer' }),
+          editBtn,
         ]),
-        el('div', { className: 'body', text: c.text }),
-      ])
-    );
+        body,
+      ]);
+    });
 
     const comments = el('div', { className: 'comments' }, [
       el('p', { className: 'col-title', text: 'コメント (' + (issue.comments || []).length + ')' }),
@@ -926,12 +1002,19 @@ const INDEX_HTML = `<!DOCTYPE html>
 
   function renderNewForm() {
     state.selectedId = null;
+    updateUrl(null);
     renderList();
     els.detail.className = 'panel';
     els.detail.textContent = '';
 
     const titleInput = el('input', { attrs: { type: 'text', placeholder: 'タイトル（必須）' } });
     const descInput = el('textarea', { attrs: { placeholder: '説明' } });
+    function adjustDescHeight() {
+      descInput.style.height = 'auto';
+      descInput.style.height = Math.max(descInput.scrollHeight, 80) + 'px';
+    }
+    descInput.addEventListener('input', adjustDescHeight);
+    setTimeout(adjustDescHeight, 0);
     const statusSel = el('select', {}, state.meta.statuses.map((s) =>
       el('option', { text: s.label, attrs: { value: s.id, ...(s.id === state.meta.defaultStatus ? { selected: 'selected' } : {}) } })
     ));
@@ -984,6 +1067,7 @@ const INDEX_HTML = `<!DOCTYPE html>
     await withError(async () => {
       await api.archive(id);
       state.selectedId = null;
+      updateUrl(null);
       toast('アーカイブしました。');
       await reload();
       renderDetail();
@@ -993,6 +1077,7 @@ const INDEX_HTML = `<!DOCTYPE html>
     await withError(async () => {
       await api.unarchive(id);
       state.selectedId = null;
+      updateUrl(null);
       toast('復元しました。');
       await reload();
       renderDetail();
@@ -1003,6 +1088,7 @@ const INDEX_HTML = `<!DOCTYPE html>
     await withError(async () => {
       await api.remove(id);
       state.selectedId = null;
+      updateUrl(null);
       toast('削除しました。');
       await reload();
       renderDetail();
@@ -1023,6 +1109,7 @@ const INDEX_HTML = `<!DOCTYPE html>
   function setView(view) {
     state.view = view;
     state.selectedId = null;
+    updateUrl(null);
     els.tabActive.classList.toggle('active', view === 'active');
     els.tabArchive.classList.toggle('active', view === 'archive');
     els.newBtn.classList.toggle('hidden', view === 'archive');
@@ -1049,7 +1136,31 @@ const INDEX_HTML = `<!DOCTYPE html>
       state.meta = await api.meta();
       populateStatusFilter();
       await reload();
+      const urlId = parseIdFromUrl();
+      if (urlId) {
+        if (!findIssue(urlId)) {
+          const archivedData = await api.listArchive();
+          if (archivedData.issues.some((issue) => issue.id === urlId)) {
+            state.view = 'archive';
+            state.issues = archivedData.issues;
+            els.tabActive.classList.remove('active');
+            els.tabArchive.classList.add('active');
+            els.newBtn.classList.add('hidden');
+            els.statusFilter.classList.add('hidden');
+          }
+        }
+        if (findIssue(urlId)) {
+          state.selectedId = urlId;
+        } else {
+          updateUrl(null);
+          toast('URLで指定された課題が見つかりません。', true);
+        }
+      }
+      renderList();
       renderDetail();
+      if (state.selectedId) {
+        requestAnimationFrame(() => els.detail.scrollIntoView({ block: 'start' }));
+      }
     });
     bind();
     setInterval(() => { withError(() => reload()); }, 10000);
