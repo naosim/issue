@@ -82,6 +82,7 @@ task-manager/
 | `POST` | `/api/issues` | 課題の新規作成 |
 | `PUT` | `/api/issues/:id` | 課題の更新 |
 | `POST` | `/api/issues/:id/comments` | コメントの追加 |
+| `PUT` | `/api/issues/:id/comments/:index` | コメントの編集 |
 | `POST` | `/api/issues/:id/archive` | 課題のアーカイブ |
 | `POST` | `/api/issues/:id/unarchive` | 課題の復元 |
 | `DELETE` | `/api/issues/:id` | アーカイブ済み課題の完全削除 |

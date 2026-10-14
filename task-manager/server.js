@@ -327,6 +327,7 @@ ${priorityRows}
 | POST | \`/api/issues\` | 課題の新規作成 |
 | PUT | \`/api/issues/:id\` | 課題の更新 |
 | POST | \`/api/issues/:id/comments\` | コメント追加 |
+| PUT | \`/api/issues/:id/comments/:index\` | コメント編集 |
 | POST | \`/api/issues/:id/archive\` | アーカイブ（ファイル移動） |
 | POST | \`/api/issues/:id/unarchive\` | アーカイブから復元 |
 | DELETE | \`/api/issues/:id\` | 完全削除（アーカイブ済みのみ） |
@@ -498,6 +499,37 @@ async function handleApi(req, res, pathname) {
     issue.updatedAt = now;
     writeJsonAtomic(located.filePath, issue);
     return sendJson(res, 201, { issue });
+  }
+
+  const commentEditMatch = pathname.match(
+    /^\/api\/issues\/(ISSUE-\d{3,})\/comments\/(\d+)$/
+  );
+  if (commentEditMatch && method === 'PUT') {
+    const [, id, indexText] = commentEditMatch;
+    const located = locateIssue(id);
+    if (!located) return sendJson(res, 404, { error: `課題が見つかりません: ${id}` });
+
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+
+    const text = toTrimmedString(body.text, 10000);
+    if (!text) return sendJson(res, 400, { errors: ['text は必須です。'] });
+
+    const issue = readIssueFile(located.dir, located.filename);
+    const index = Number(indexText);
+    if (!Array.isArray(issue.comments) || !issue.comments[index]) {
+      return sendJson(res, 404, { error: 'コメントが見つかりません。' });
+    }
+
+    const now = new Date().toISOString();
+    issue.comments[index] = { ...issue.comments[index], text, updatedAt: now };
+    issue.updatedAt = now;
+    writeJsonAtomic(located.filePath, issue);
+    return sendJson(res, 200, { issue });
   }
 
   const archiveActionMatch = pathname.match(
@@ -711,6 +743,9 @@ const INDEX_HTML = `<!DOCTYPE html>
     create(payload) { return this.req('POST', '/api/issues', payload); },
     update(id, payload) { return this.req('PUT', '/api/issues/' + id, payload); },
     addComment(id, payload) { return this.req('POST', '/api/issues/' + id + '/comments', payload); },
+    editComment(id, index, payload) {
+      return this.req('PUT', '/api/issues/' + id + '/comments/' + index, payload);
+    },
     archive(id) { return this.req('POST', '/api/issues/' + id + '/archive'); },
     unarchive(id) { return this.req('POST', '/api/issues/' + id + '/unarchive'); },
     remove(id) { return this.req('DELETE', '/api/issues/' + id); },
@@ -786,6 +821,22 @@ const INDEX_HTML = `<!DOCTYPE html>
     }
     (children || []).forEach((c) => c && node.appendChild(c));
     return node;
+  }
+
+  function fitTextareaToContent(textarea) {
+    textarea.style.minHeight = '80px';
+    textarea.style.height = 'auto';
+    const styles = window.getComputedStyle(textarea);
+    const borders =
+      parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
+    const height = Math.max(textarea.scrollHeight + borders, 80);
+    textarea.style.height = height + 'px';
+    textarea.style.minHeight = height + 'px';
+  }
+
+  function enableTextareaAutoHeight(textarea) {
+    textarea.addEventListener('input', () => fitTextareaToContent(textarea));
+    setTimeout(() => fitTextareaToContent(textarea), 0);
   }
 
   function fmtDate(iso) {
@@ -868,12 +919,7 @@ const INDEX_HTML = `<!DOCTYPE html>
     const titleInput = el('input', { attrs: { type: 'text', value: issue.title } });
     const descInput = el('textarea', { attrs: {} });
     descInput.value = issue.description || '';
-    function adjustDescHeight() {
-      descInput.style.height = 'auto';
-      descInput.style.height = Math.max(descInput.scrollHeight, 80) + 'px';
-    }
-    descInput.addEventListener('input', adjustDescHeight);
-    setTimeout(adjustDescHeight, 0);
+    enableTextareaAutoHeight(descInput);
 
     const statusSel = el('select', {}, state.meta.statuses.map((s) =>
       el('option', { text: s.label, attrs: { value: s.id, ...(s.id === issue.status ? { selected: 'selected' } : {}) } })
@@ -944,7 +990,8 @@ const INDEX_HTML = `<!DOCTYPE html>
         on: {
           click: () => {
             if (body.querySelector('textarea')) return;
-            const ta = el('textarea', { attrs: { value: c.text } });
+            const ta = el('textarea', {});
+            ta.value = c.text;
             body.textContent = '';
             body.appendChild(ta);
             const save = el('button', {
@@ -953,10 +1000,9 @@ const INDEX_HTML = `<!DOCTYPE html>
               on: {
                 click: async () => {
                   const newText = ta.value.trim();
-                  if (!newText) return;
-                  const newComments = (issue.comments || []).map((cc, i) => (i === idx ? { ...cc, text: newText, updatedAt: new Date().toISOString() } : cc));
+                  if (!newText) { toast('コメントを空にはできません。', true); return; }
                   await withError(async () => {
-                    await api.update(issue.id, { comments: newComments });
+                    await api.editComment(issue.id, idx, { text: newText });
                     toast('コメントを更新しました。');
                     await reload();
                     renderDetail();
@@ -1009,12 +1055,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 
     const titleInput = el('input', { attrs: { type: 'text', placeholder: 'タイトル（必須）' } });
     const descInput = el('textarea', { attrs: { placeholder: '説明' } });
-    function adjustDescHeight() {
-      descInput.style.height = 'auto';
-      descInput.style.height = Math.max(descInput.scrollHeight, 80) + 'px';
-    }
-    descInput.addEventListener('input', adjustDescHeight);
-    setTimeout(adjustDescHeight, 0);
+    enableTextareaAutoHeight(descInput);
     const statusSel = el('select', {}, state.meta.statuses.map((s) =>
       el('option', { text: s.label, attrs: { value: s.id, ...(s.id === state.meta.defaultStatus ? { selected: 'selected' } : {}) } })
     ));
