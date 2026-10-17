@@ -623,15 +623,25 @@ const INDEX_HTML = `<!DOCTYPE html>
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 7px 9px;
+    padding: 8px 10px;
+    min-height: 32px;
+  }
+  input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 180px;
   }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   textarea { resize: vertical; min-height: 80px; }
   .layout { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 16px; padding: 16px; align-items: start; }
   @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
   .col-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
-  .toolbar input { flex: 1; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar-item { display: flex; gap: 6px; align-items: center; flex: 1 1 180px; min-width: 140px; }
+  .toolbar-item.search { flex: 2 1 260px; }
+  .toolbar-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .toolbar input,
+  .toolbar select { width: 100%; min-height: 36px; }
   .list { display: flex; flex-direction: column; gap: 8px; }
   .card {
     background: var(--panel);
@@ -683,6 +693,7 @@ const INDEX_HTML = `<!DOCTYPE html>
   .toast.show { opacity: 1; }
   .toast.error { border-color: var(--danger); color: #ffb4ae; }
   .hidden { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .tabs { display: flex; gap: 6px; }
   .tabs button.active { border-color: var(--accent); color: var(--accent); }
 </style>
@@ -700,11 +711,18 @@ const INDEX_HTML = `<!DOCTYPE html>
 
 <div class="layout">
   <section>
-    <div class="toolbar">
-      <input id="filter" type="search" placeholder="タイトル・ラベルで絞り込み">
-      <select id="status-filter">
-        <option value="">すべてのステータス</option>
-      </select>
+    <div class="toolbar" role="toolbar" aria-label="課題一覧の絞り込み">
+      <div class="toolbar-item search">
+        <label for="filter" class="toolbar-label">検索</label>
+        <input id="filter" type="search" placeholder="タイトル・ID・ラベル・説明で絞り込み" autocomplete="off" spellcheck="false" aria-describedby="filter-help">
+        <small id="filter-help" class="sr-only">部分一致で絞り込みます</small>
+      </div>
+      <div class="toolbar-item">
+        <label for="status-filter" class="toolbar-label">ステータス</label>
+        <select id="status-filter">
+          <option value="">すべて</option>
+        </select>
+      </div>
     </div>
     <div id="list" class="list"></div>
   </section>
@@ -851,7 +869,12 @@ const INDEX_HTML = `<!DOCTYPE html>
     return state.issues.filter((it) => {
       if (state.statusFilter && it.status !== state.statusFilter) return false;
       if (!q) return true;
-      const hay = [it.id, it.title, (it.labels || []).join(' ')].join(' ').toLowerCase();
+      const hay = [
+        it.id,
+        it.title || '',
+        (it.description || '').replace(/\\n/g, ' '),
+        (it.labels || []).join(' '),
+      ].join(' ').toLowerCase();
       return hay.includes(q);
     });
   }
